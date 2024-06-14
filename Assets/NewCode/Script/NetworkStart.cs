@@ -68,6 +68,7 @@ namespace BoomTanks.Multiplayer
 
         private void ClientStartAction()
         {
+            networkManager.cli
             NetworkManager.ClientManager.StartConnection();
             StartCoroutine(LoadScenes());
         }
