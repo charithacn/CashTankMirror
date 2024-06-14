@@ -78,6 +78,7 @@ namespace FishNet.CodeGenerating.ILCore
             modified |= CreateDeclaredSerializerDelegates(session);
             modified |= CreateDeclaredSerializers(session);
             modified |= CreateDeclaredComparerDelegates(session);
+            modified |= CreateIncludeSerializationSerializers(session);
             modified |= CreateIBroadcast(session);
 #if !DISABLE_QOL_ATTRIBUTES
             modified |= CreateQOLAttributes(session);
@@ -233,6 +234,43 @@ namespace FishNet.CodeGenerating.ILCore
 
             return modified;
         }
+        
+        /// <summary>
+        /// Creates serializers for types that use IncludeSerialization attribute.
+        /// </summary>
+        private bool CreateIncludeSerializationSerializers(CodegenSession session)
+        {
+            string attributeName = typeof(IncludeSerializationAttribute).FullName;
+            WriterProcessor wp = session.GetClass<WriterProcessor>();
+            ReaderProcessor rp = session.GetClass<ReaderProcessor>();
+
+            bool modified = false;
+            List<TypeDefinition> allTypeDefs = session.Module.Types.ToList();
+            foreach (TypeDefinition td in allTypeDefs)
+            {
+                if (!CanSerialize())
+                    continue;
+
+                TypeReference tr = session.ImportReference(td);
+                if (wp.CreateWriter(tr) != null && rp.CreateReader(tr) != null)
+                    modified = true;
+                else
+                    session.LogError($"Failed to create serializers for {td.FullName}.");
+
+                bool CanSerialize()
+                {
+                    foreach (CustomAttribute item in td.CustomAttributes)
+                    {
+                        if (item.AttributeType.FullName == attributeName)
+                            return true;
+                    }
+
+                    return false;
+                }
+            }
+
+            return modified;
+        }
 
 
         /// <summary>
@@ -299,7 +337,9 @@ namespace FishNet.CodeGenerating.ILCore
             bool modified = false;
 
             bool codeStripping = false;
-            
+            //PROSTART
+            codeStripping = CodeStripping.StripBuild;
+            //PROEND
             List<TypeDefinition> allTypeDefs = session.Module.Types.ToList();
 
             /* First pass, potentially only pass.
@@ -313,7 +353,19 @@ namespace FishNet.CodeGenerating.ILCore
                 modified |= session.GetClass<QolAttributeProcessor>().Process(td, codeStripping);
             }
 
-            
+            //PROSTART
+            /* If stripping then remove the remainder content */
+            if (codeStripping)
+            {
+                foreach (TypeDefinition td in allTypeDefs)
+                {
+                    if (session.GetClass<GeneralHelper>().HasExcludeSerializationAttribute(td))
+                        continue;
+
+                    modified |= session.GetClass<QolAttributeProcessor>().Process(td, false);
+                }
+            }
+            //PROEND
 
             return modified;
         }
