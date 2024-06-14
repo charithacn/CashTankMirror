@@ -24,7 +24,7 @@ namespace BoomTanks.Multiplayer
         public Button hostButton;
         public InputField ipAddress;
 
-        NetworkManager networkManager;
+       public  NetworkManager networkManager;
         void Start()
         {
 
