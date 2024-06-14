@@ -659,6 +659,7 @@ namespace FishNet.Component.Transforming
 
         public override void OnOwnershipServer(NetworkConnection prevOwner)
         {
+            ConfigureComponents();
             _intervalsRemaining = 0;
             //Reset last tick since each client sends their own ticks.
             _lastServerRpcTick = 0;
@@ -759,7 +760,7 @@ namespace FishNet.Component.Transforming
 
         private void Update()
         {
-            MoveToTarget();
+            MoveToTarget(Time.deltaTime);
         }
 
         /// <summary>
@@ -870,7 +871,7 @@ namespace FishNet.Component.Transforming
                     //Client auth.
                     if (_clientAuthoritative)
                     {
-                        c.enabled = base.IsOwner;
+                        c.enabled = base.HasAuthority;
                     }
                     //Server auth.
                     else
@@ -1517,7 +1518,7 @@ namespace FishNet.Component.Transforming
         /// Moves to a GoalData. Automatically determins if to use data from server or client.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private void MoveToTarget(float deltaOverride = -1f)
+        private void MoveToTarget(float delta)
         {
             if (_currentGoalData == null)
                 return;
@@ -1543,7 +1544,6 @@ namespace FishNet.Component.Transforming
             if (!controlledByClient && base.IsServerInitialized)
                 return;
 
-            float delta = (deltaOverride != -1f) ? deltaOverride : Time.deltaTime;
             /* Once here it's safe to assume the object will be moving.
              * Any checks which would stop it from moving be it client
              * auth and owner, or server controlled and server, ect,
@@ -1617,7 +1617,27 @@ namespace FishNet.Component.Transforming
                 //No more in buffer, see if can extrapolate.
                 else
                 {
-                    
+                    //PROSTART
+                    //Can extrapolate.
+                    if (td.ExtrapolationState == TransformData.ExtrapolateState.Available)
+                    {
+                        rd.TimeRemaining = (float)(_extrapolation * base.TimeManager.TickDelta);
+                        td.ExtrapolationState = TransformData.ExtrapolateState.Active;
+                        if (leftOver > 0f)
+                            MoveToTarget(leftOver);
+                    }
+                    //Ran out of extrapolate.
+                    else if (td.ExtrapolationState == TransformData.ExtrapolateState.Active)
+                    {
+                        rd.TimeRemaining = (float)(_extrapolation * base.TimeManager.TickDelta);
+                        td.ExtrapolationState = TransformData.ExtrapolateState.Disabled;
+                        if (leftOver > 0f)
+                            MoveToTarget(leftOver);
+                    }
+                    //Extrapolation has ended or was never enabled.
+                    else
+                    {
+                        //PROEND
                         /* If everything matches up then end queue.
                         * Otherwise let it play out until stuff
                         * aligns. Generally the time remaining is enough
@@ -1626,7 +1646,9 @@ namespace FishNet.Component.Transforming
                         if (!HasChanged(td))
                             _currentGoalData = null;
                         OnInterpolationComplete?.Invoke();
-                        
+                        //PROSTART
+                    }
+                    //PROEND
                 }
             }
 
@@ -1710,7 +1732,37 @@ namespace FishNet.Component.Transforming
                             //If to not send to owner.
                             if (!_sendToOwner && nc == base.Owner)
                                 continue;
-                            
+                            //PROSTART
+                            if (useLod)
+                            {
+                                NetworkConnection.LevelOfDetailData cachedLod;
+                                //LOD not found.
+                                if (!nc.LevelOfDetails.TryGetValue(base.NetworkObject, out cachedLod))
+                                {
+                                    /* If not found do not check skips. This means LOD
+                                     * has not been set. When LOD is not set the client
+                                     * is to receive updates at regular intervals. */
+                                }
+                                //If LOD was found check if lodIndex has been met.
+                                else
+                                {
+                                    /* If neither current nor previous LOD meet
+                                     * the index then skip sending data. When index
+                                     * is current reset previous lod. This ensures that when
+                                     * LODs increase the previous LOD will send until on
+                                     * the increased index. By doing so there will be no unexpected
+                                     * receive delays. When going down in index this is not required
+                                     * because the new index will send faster than the old and the
+                                     * client will receive data before the buffer runs out. */
+                                    if (cachedLod.PreviousLevelOfDetail > lodIndex && cachedLod.CurrentLevelOfDetail > lodIndex)
+                                        continue;
+                                    /* If currentLevelOfDetail is the same as index then a full cycle
+                                     * has been met and previousLod can be updated to current. */
+                                    if (lodIndex >= cachedLod.CurrentLevelOfDetail)
+                                        cachedLod.PreviousLevelOfDetail = cachedLod.CurrentLevelOfDetail;
+                                }
+                            }
+                            //PROEND
                             //No need for server to send to local client (clientHost).
                             //Still send if development for stat tracking.
 #if !DEVELOPMENT
@@ -2167,7 +2219,14 @@ namespace FishNet.Component.Transforming
             //Default value.
             next.ExtrapolationState = TransformData.ExtrapolateState.Disabled;
 
-            
+            //PROSTART
+            if (_extrapolation == 0 || !_synchronizePosition || channel == Channel.Reliable || next.Position == prev.Position)
+                return;
+
+            Vector3 offet = (next.Position - prev.Position) * _extrapolation;
+            next.ExtrapolatedPosition = (next.Position + offet);
+            next.ExtrapolationState = TransformData.ExtrapolateState.Available;
+            //PROEND
         }
 
 
